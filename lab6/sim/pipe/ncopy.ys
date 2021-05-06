@@ -1,0 +1,196 @@
+#/* $begin ncopy-ys */
+##################################################################
+# ncopy.ys - Copy a src block of len words to dst.
+# Return the number of positive words (>0) contained in src.
+#
+# Include your name and ID here.
+# 沈玮杭 519021910766
+#
+# Describe how and why you modified the baseline code.
+#	先将加常数指令都换成iaddq
+#	再尝试尽可能展开循环，发现展开到10次后程序会超出1000Bytes的限制，所以展开10次
+#	接下来考虑除以10的余数，由于有jl，je，jg，故考虑三叉树搜索
+#	构造的搜索树：
+#						+5(R)
+#			+4(SL)			5			-2(SR)
+#		0	1	-2(SLR)				6	7	-2(SRR)
+#			2	3	4					8	9
+# 	有符号的为结点，要iaddq该值后判断是哪颗子树
+#	最后0-9各设置一个label，从大到小排列等待跳转
+##################################################################
+# Do not modify this portion
+# Function prologue.
+# %rdi = src, %rsi = dst, %rdx = len
+ncopy:
+
+##################################################################
+# You can modify this portion
+	# Loop header
+	#xorq %rax,%rax		# count = 0;
+	iaddq $-10,%rdx
+	jl R
+
+L101:
+	mrmovq (%rdi), %r9
+	mrmovq 0x8(%rdi), %r10
+	rmmovq %r9, (%rsi)
+	andq %r9, %r9
+	
+	rmmovq %r10, 0x8(%rsi)
+	jle L102
+	iaddq $1, %rax
+L102:
+	andq %r10, %r10
+	mrmovq 0x10(%rdi), %r9
+	jle L103
+	iaddq $1, %rax
+L103:
+	andq %r9, %r9
+	mrmovq 0x18(%rdi), %r10
+	rmmovq %r9, 0x10(%rsi)
+	jle L104
+	iaddq $1, %rax
+L104:
+	andq %r10, %r10
+	mrmovq 0x20(%rdi), %r9
+	rmmovq %r10, 0x18(%rsi)
+	jle L105
+	iaddq $1, %rax
+L105:
+	andq %r9, %r9
+	mrmovq 0x28(%rdi), %r10
+	rmmovq %r9, 0x20(%rsi)
+	jle L106
+	iaddq $1, %rax
+L106:
+	andq %r10, %r10
+	mrmovq 0x30(%rdi), %r9
+	rmmovq %r10, 0x28(%rsi)
+	jle L107
+	iaddq $1, %rax
+L107:
+	andq %r9, %r9
+	mrmovq 0x38(%rdi), %r10
+	rmmovq %r9, 0x30(%rsi)
+	jle L108
+	iaddq $1, %rax
+L108:
+	andq %r10, %r10
+	mrmovq 0x40(%rdi), %r9
+	rmmovq %r10, 0x38(%rsi)
+	jle L109
+	iaddq $1, %rax
+L109:
+	andq %r9, %r9
+	mrmovq 0x48(%rdi), %r10
+	rmmovq %r9, 0x40(%rsi)
+	jle L1010
+	iaddq $1, %rax
+L1010:
+	andq %r10, %r10
+	rmmovq %r10, $0x48(%rsi)
+	jle loop10_judge
+	iaddq $1, %rax
+loop10_judge:
+	iaddq $0x50, %rdi
+	iaddq $0x50, %rsi
+	iaddq $-10, %rdx
+	jge L101
+R:
+	iaddq $5, %rdx
+	jl SL
+	jg SR
+	je R5
+SL:
+	iaddq $4, %rdx
+	jg SLR
+	je R1
+	jl Done
+SLR:
+	iaddq $-2, %rdx
+	jl R2
+	jg R4
+	je R3
+SR:
+	iaddq $-2, %rdx
+	jl R6
+	je R7
+SRR:
+	iaddq $-2, %rdx
+	jl R8
+R9:
+	mrmovq 0x40(%rdi), %r10
+	andq %r10, %r10
+	rmmovq %r10, 0x40(%rsi)
+R8:
+	mrmovq 0x38(%rdi), %r10
+	jle R82
+	iaddq $1, %rax
+R82:
+	andq %r10, %r10
+	rmmovq %r10, 0x38(%rsi)
+	
+R7:
+	mrmovq 0x30(%rdi), %r10
+	jle R72
+	iaddq $1, %rax
+R72:
+	andq %r10, %r10
+	rmmovq %r10, 0x30(%rsi)
+	
+R6:
+	mrmovq 0x28(%rdi), %r10
+	jle R62
+	iaddq $1, %rax
+R62:
+	andq %r10, %r10
+	rmmovq %r10, 0x28(%rsi)
+	
+R5:
+	mrmovq 0x20(%rdi), %r10
+	jle R52
+	iaddq $1, %rax
+R52:
+	andq %r10, %r10
+	rmmovq %r10, 0x20(%rsi)
+	jle R4
+	iaddq $1, %rax
+R4:
+	mrmovq 0x18(%rdi), %r10
+	andq %r10, %r10
+	rmmovq %r10, 0x18(%rsi)
+	
+R3:
+	mrmovq 0x10(%rdi), %r10
+	jle R32
+	iaddq $1, %rax
+R32:
+	andq %r10, %r10
+	rmmovq %r10, 0x10(%rsi)
+	
+R2:
+	mrmovq 0x8(%rdi), %r10
+	jle R22
+	iaddq $1, %rax
+R22:
+	andq %r10, %r10
+	rmmovq %r10, 0x8(%rsi)
+	
+R1:
+	mrmovq (%rdi), %r10
+	jle R12
+	iaddq $1, %rax
+R12:
+	andq %r10, %r10
+	rmmovq %r10, (%rsi)
+	jle Done
+	iaddq $1, %rax
+##################################################################
+# Do not modify the following section of code
+# Function epilogue.
+Done:
+	ret
+##################################################################
+# Keep the following label at the end of your function
+End:
+#/* $end ncopy-ys */
