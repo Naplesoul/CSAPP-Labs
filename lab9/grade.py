@@ -16,7 +16,9 @@ import os
 
 DEFAULT_TIMEOUT=3
 outside_proxy = None
+outside_proxy_port = None
 outside_server = None
+
 verbose = True
 strace = False
 quiet = False
@@ -367,6 +369,7 @@ def expect_resp(proc, resp, timeout=-1):
                         resp.body, recv_body, True)
 
 def build_env():
+    global outside_proxy_port
     server = None
     client = None
     proxy = None
@@ -382,6 +385,7 @@ def build_env():
             proxy = start_proxy(proxy_port)
         else:
             proxy_port = outside_proxy
+            outside_proxy_port = proxy_port
         client = start_client(proxy_port)
         return (server, server_port, client, proxy)
     except:
@@ -401,7 +405,10 @@ def build_sc(proxy):
             server_port, server = start_server()
         else:
             raise Exception("Can't test concurrency when using outside server")
-        client = start_client(proxy.listen_port)
+        if outside_proxy == None:
+            client = start_client(proxy.listen_port)
+        else:
+            client = start_client(outside_proxy_port)
         return (server, server_port, client)
     except:
         if server != None:
@@ -757,20 +764,26 @@ def do_part2_1(server, server_port, client, proxy):
         restart_sc(server, client)
 
         logs = ""
-        while True:
-            try:
-                logs += proxy.readline()
-            except pexpect.exceptions.TIMEOUT:
-                break
-        for log in expect_logs:
-            if log["re"].search(logs) == None:
-                raise MissingLogException(log["client_addr"], log["uri"], log["size"], logs)
+        if proxy != None:
+            while True:
+                try:
+                    logs += proxy.readline()
+                except pexpect.exceptions.TIMEOUT:
+                    break
+            for log in expect_logs:
+                if log["re"].search(logs) == None:
+                    raise MissingLogException(log["client_addr"], log["uri"], log["size"], logs)
+        else:
+            print "warning: omitting proxy log check due to --outside mode, the score might not be accurate"
 
 STEP = (100, 150)
 class ConcurrentPayload(object):
     def __init__(self, server, proxy, req, resp):
         self.proxy = proxy
-        self.client = start_client(proxy.listen_port)
+        if outside_proxy != None:
+            self.client = start_client(outside_proxy_port)
+        else:
+            self.client = start_client(proxy.listen_port)
         self.server = server
         self.req = req
         self.req_pos = 0
@@ -830,15 +843,19 @@ def do_part2_2(server, server_port, client, proxy):
         if todo.do():
             payload = payload[:i] + payload[i+1:]
             done += 1
+
     logs = ""
-    while True:
-        try:
-            logs += proxy.readline()
-        except pexpect.exceptions.TIMEOUT:
-            break
-    for log in expect_logs:
-        if log["re"].search(logs) == None:
-            raise MissingLogException(log["client_addr"], log["uri"], log["size"], logs)
+    if proxy != None:
+        while True:
+            try:
+                logs += proxy.readline()
+            except pexpect.exceptions.TIMEOUT:
+                break
+        for log in expect_logs:
+            if log["re"].search(logs) == None:
+                raise MissingLogException(log["client_addr"], log["uri"], log["size"], logs)
+    else:
+        print "warning: omitting proxy log check due to --outside mode, the score might not be accurate"
 
 test_part1_1 = {
     "score": 2,
@@ -912,6 +929,7 @@ candidate_tests = {
 def main():
     global verbose
     global outside_proxy
+    global outside_proxy_port
     global quiet
     global strace
     parser = argparse.ArgumentParser(description="Test your lab 10.")
