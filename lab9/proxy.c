@@ -8,24 +8,27 @@
 #include <stdarg.h>
 #include <sys/select.h>
 
+#define MAXBIGBUF 81920
+
 /*
  * Function prototypes
  */
 int parse_uri(char *uri, char *target_addr, char *path, char *port);
 void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, size_t size);
 void *proxy_thread(void *vargp);
-void relay(int connfd, char *hostname);
+void relay(int connfd, struct sockaddr_in *client_host);
 ssize_t relay_content(rio_t *from_fd, int to_fd, ssize_t content_length);
 ssize_t Rio_readnb_w(rio_t *rp, void *usrbuf, size_t n);
 ssize_t Rio_writen_w(int fd, void *usrbuf, size_t n);
 ssize_t Rio_readlineb_w(rio_t *rp, void *usrbuf, size_t maxlen);
 ssize_t read_requesthdrs_w(rio_t *rp, char *hdrbuf);
 
+sem_t printf_lock;
 
 struct Thread_Param
 {
     int connfd;
-    char host[MAXLINE];
+    struct sockaddr_in sa_in;
 };
 
 
@@ -39,6 +42,8 @@ int main(int argc, char **argv)
         fprintf(stderr, "Usage: %s <port number>\n", argv[0]);
         exit(0);
     }
+
+    sem_init(&printf_lock, 0, 1);
 
     int listenfd;
     socklen_t clientlen;
@@ -55,7 +60,7 @@ int main(int argc, char **argv)
         Getnameinfo((SA *) &clientaddr, clientlen, client_host, MAXLINE, client_port, MAXLINE, 0);
         struct Thread_Param *param = (struct Thread_Param *)Malloc(sizeof(struct Thread_Param));
         param->connfd = connfdp;
-        sprintf(param->host, "%s:%s", client_host, client_port);
+        param->sa_in = *(struct sockaddr_in *) &clientaddr;
         Pthread_create(&tid, NULL, proxy_thread, param);
     }
     exit(0);
@@ -145,7 +150,7 @@ void *proxy_thread(void *vargp)
     struct Thread_Param *param = (struct Thread_Param *)vargp;
     int connfd = param->connfd;
     Pthread_detach(Pthread_self());
-    relay(connfd, param->host);
+    relay(connfd, &(param->sa_in));
     Close(connfd);
     Free(param);
     return NULL;
@@ -184,13 +189,19 @@ ssize_t read_requesthdrs_w(rio_t *rp, char *hdrbuf)
     ssize_t rc = 0;
     char buf[MAXLINE];
     while ((rc = Rio_readlineb_w(rp, buf, MAXLINE)) > 0) {
-        sprintf(hdrbuf, "%s%s", hdrbuf, buf);
+        ssize_t line_length = strlen(buf);
+        ssize_t hdr_length = strlen(hdrbuf);
+        if (line_length + hdr_length > MAXBIGBUF) {
+            printf("Header buffer overflow!!!\n");
+            return -1;
+        }
+        strncpy(hdrbuf + hdr_length, buf, line_length);
         if (strcmp(buf, "\r\n") == 0)
             return content_length;
         if (strncasecmp(buf, "Content-Length:", 15) == 0)
             content_length = strtol(buf + 16, NULL, 10);
     }
-    printf("Connection closed by peer\n");
+    // printf("Connection closed by peer\n");
     return -1;
 }
 
@@ -211,12 +222,12 @@ ssize_t relay_content(rio_t *from_fd, int to_fd, ssize_t content_length)
     // relay MAXBUF bytes one time
     while (relaid_length < content_length) {
         if ((received_length = Rio_readnb_w(from_fd, buf, 1)) <= 0) {
-            printf("Connection closed by sender\n");
+            // printf("Connection closed by sender\n");
             return -1;
         }
         ssize_t sent_length;
         if ((sent_length = Rio_writen_w(to_fd, buf, 1)) != 1) {
-                printf("Connection closed by receiver\n");
+                // printf("Connection closed by receiver\n");
             return -1;
         }
         relaid_length += 1;
@@ -224,11 +235,11 @@ ssize_t relay_content(rio_t *from_fd, int to_fd, ssize_t content_length)
     return relaid_length;
 }
 
-void relay(int client_fd, char *client_host)
+void relay(int client_fd, struct sockaddr_in *client_host)
 {
-    char buf[MAXBUF*10];
+    char buf[MAXBIGBUF];
     char method[MAXLINE], uri[MAXLINE], version[MAXLINE];
-    char filename[MAXLINE], server_hostname[MAXLINE], client_hostname[MAXLINE], port[MAXLINE];
+    char filename[MAXLINE], server_hostname[MAXLINE], port[MAXLINE];
     rio_t rio_client, rio_server;
     int server_fd;
     ssize_t content_length;
@@ -241,17 +252,17 @@ void relay(int client_fd, char *client_host)
     // parse uri
     sscanf(buf, "%s %s %s\r\n", method, uri, version);
     if (parse_uri(uri, server_hostname, filename, port) < 0) {
-        printf("Fail to parse URI\n");
+        // printf("Fail to parse URI\n");
         return;
     }
 
     // prepare buf for HTTP request line
-    memset(buf, 0 , MAXBUF*10);
+    memset(buf, 0 , MAXBIGBUF);
     sprintf(buf, "%s /%s %s\r\n", method, filename, version);
 
     // read request header from client, store the header in buf
     if ((content_length = read_requesthdrs_w(&rio_client, buf)) < 0) {
-        printf("Fail to parse request header\n");
+        // printf("Fail to parse request header\n");
         return;
     }
 
@@ -266,11 +277,11 @@ void relay(int client_fd, char *client_host)
     if (relay_content(&rio_client, server_fd, content_length) != content_length)
         return;
 
-    memset(buf, 0 , MAXBUF*10);
+    memset(buf, 0 , MAXBIGBUF);
 
     // read response header from server, store the header in buf
     if ((content_length = read_requesthdrs_w(&rio_server, buf)) < 0) {
-        printf("Fail to parse request header\n");
+        // printf("Fail to parse request header\n");
         return;
     }
 
@@ -287,5 +298,7 @@ void relay(int client_fd, char *client_host)
 
     char log[MAXLINE];
     format_log_entry(log, client_host, uri, total_length);
+    P(&printf_lock);
     printf("%s\n", log);
+    V(&printf_lock);
 }
