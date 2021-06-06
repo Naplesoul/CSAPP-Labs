@@ -463,8 +463,8 @@ static void *find_fit(size_t asize)
                 min_waste = current_waste;
                 best_pos = current_pos;
             }
-            // select the best place in the first 20 free blocks
-            if (++times == 20)
+            // select the best place in the first 3 free blocks which can meet the requirements
+            if (current_size >= asize && ++times == 3)
                 return best_pos;
             cp = GET_SUCC(current_pos);
         }
@@ -607,7 +607,7 @@ static void printblock(void *bp)
         return;
     }
 
-    printf("%p: header: [%p:%c] footer: [%p:%c]\n", bp, 
+    printf("%p: header: [%ld:%c] footer: [%ld:%c]\n", bp, 
         hsize, (halloc ? 'a' : 'f'), 
         fsize, (falloc ? 'a' : 'f'));
 }
@@ -675,7 +675,7 @@ static int checklist()
             char *current_block = heap_listp + current_offset;
             if (GET_ALLOC(HDRP(current_block))
                 || GET_ALLOC(FTRP(current_block))) {
-                    printf("Block %ux in free list %d is not free\n", current_block, i);
+                    printf("Block %p in free list %d is not free\n", current_block, i);
                     return 1;
                 }
             current_offset = GET_SUCC(current_block);
@@ -690,5 +690,5 @@ static int checklist()
  */
 int mm_check(void)
 {
-    return checkheap || checklist;
+    return checkheap(1) || checklist();
 }
